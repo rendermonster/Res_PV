@@ -1,0 +1,283 @@
+---
+title: "Data_Incubator_PV"
+author: "Brandon Burd"
+date: "July 23, 2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "Residential PV Adoption at Individual Level"
+output:
+  html_document: rmarkdown::github_document
+---
+
+#Load required packages
+```{r load-packages, message=FALSE}
+library(statsr)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(readxl)
+library(haven)
+library(broom)
+library(QuantPsyc)
+```
+
+
+
+
+
+
+#IMPORT DATASETS
+
+
+#Import raw PV installation data from Open PV Project
+```{r open-raw-pv-data}
+OpenPV_Raw <- read_csv("./openpv_all.csv")
+```
+
+
+#Import LCV (League of Conservation Voters) data with six expected errors
+```{r open-LCV}
+LCV_Data <- read_csv("./Master_LCV_Data_1980_2016.csv")
+```
+
+
+#Import master zip code list with voter district matches from Census
+```{r open-voter-district-zip}
+District_Zip <- read_excel("./District_Zip.xlsx")
+```
+
+
+#Import solar irradiance data from PV Watts (Lawrence Berkeley Labs)
+```{r open-solar}
+Solar_Data <- read_dta("./solar.dta")
+```
+
+
+#Import compiled electricity data from Energy Information Administration
+```{r open-granular-elec}
+Granular_Elec <- read_excel("./Granular_Electricity.xlsx")
+```
+
+
+#Import presidential voter data with interpolated years from Partisan Voter Index
+```{r open-pres-vote}
+Pres_Vote <- read_excel("./Political_Party.xlsx")
+```
+
+
+#Import median income data from Census in text format to retain leading zeroes (expected errors)
+```{r open-median-income}
+Income <- read_excel("./Median_Income.xlsx")
+```
+
+
+#Import land area data by county from Census
+```{r open-land-area}
+Area <- read_excel("./Land_Area.xls")
+```
+
+
+#Import pops and household size data from Census
+```{r open-pops-and-households}
+Pops <- read_excel("./Master_Pops.xlsx")
+```
+
+
+#Import master GeoID matcher, Zip <- makes GeoID matches
+```{r open-fips-zips}
+GeoID <- read_excel("./FIPS_Zips.xlsx")
+```
+
+
+#Import county to zips matcher
+```{r open-county-zips}
+County_Zips <- read_excel("./County_Zips.xlsx")
+```
+
+
+#Import state abbreviation matcher
+```{r open-state-abbrev}
+State_Abbreviations_Matcher <- read_excel("./State_Abbreviations_Matcher.xlsx")
+```
+
+
+
+
+
+
+#BUILD INDIVIDUAL-LEVEL MODEL FOR ANALYSIS
+
+
+#Move clean, raw data to new df for relevant categories
+```{r clean-raw-data}
+Individual_Model <- OpenPV_Raw[, c(1,2,5,7,8,10,11,14,15,18,21,22)]
+remove(OpenPV_Raw)
+```
+
+
+#Make rebate per kW variable in model
+```{r rebate-per-kw-model}
+Individual_Model$rebate_per_kW <- Individual_Model$rebate / Individual_Model$size_kw / 1000
+```
+
+
+#Make tax rate variable in model (NAs introduced for entries without tax information provided)
+```{r tax-rate-model}
+Individual_Model$Tax_Rate <- as.numeric(Individual_Model$sales_tax_cost) / as.numeric(Individual_Model$cost)
+```
+
+
+#Attach GeoID to model
+```{r attach-geoid-model}
+Individual_Model <- Individual_Model %>%
+  mutate(GeoID = GeoID$GEOID[match(Individual_Model$zipcode, GeoID$ZIP, nomatch = NA)])
+```
+
+
+#Attach median income to model
+```{r attach-median-income-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Median_Income = Income$`Median Household Income`[match(Individual_Model$GeoID, Income$GeoID, nomatch = NA)])
+```
+
+
+#Attach land area to model
+```{r attach-land-area-Model}
+Individual_Model <- Individual_Model %>%
+  mutate(Area = Area$`Land Area`[match(Individual_Model$GeoID, Area$GeoID, nomatch = NA)])
+```
+
+
+#Attach pops to model
+```{r attach-pops-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Pops = Pops$Population[match(Individual_Model$GeoID, Pops$GeoID, nomatch = NA)])
+```
+
+
+#Attach full state names to model
+```{r attach-state-names-model}
+Individual_Model <- Individual_Model %>%
+  mutate(State = State_Abbreviations_Matcher$State[match(Individual_Model$state, State_Abbreviations_Matcher$Abbreviation, nomatch = NA)])
+```
+
+
+#Attach GeoID to District_Zip
+```{r attach-geoid-district_zip}
+District_Zip <- District_Zip %>%
+  mutate(GeoID = GeoID$GEOID[match(District_Zip$Zip, GeoID$ZIP, nomatch = NA)])
+```
+
+
+#Attach voter district to model
+```{r attach-district-model}
+Individual_Model <- Individual_Model %>%
+  mutate(District = District_Zip$District[match(Individual_Model$GeoID, District_Zip$GeoID, nomatch = 1)])
+```
+
+
+#Extract year from date in entries of model
+```{r create-year-variable-model}
+Individual_Model$Year <- substring(Individual_Model$date_installed,7,10)
+```
+
+
+#Make DistrictStateYear in model to match data
+```{r district-state-year-model}
+Individual_Model$DistrictStateYear <- paste(Individual_Model$District, Individual_Model$State, Individual_Model$Year, sep="")
+```
+
+
+#Make DistrictStateYear in LCV data to match data
+```{r district-state-year-LCV}
+LCV_Data$DistrictStateYear <- paste(LCV_Data$District, LCV_Data$State, LCV_Data$Year, sep="")
+```
+
+
+#Attach LCV scores to model
+```{r attach-LCV-model}
+Individual_Model <- Individual_Model %>%
+  mutate(LCV = LCV_Data$Score[match(Individual_Model$DistrictStateYear, LCV_Data$DistrictStateYear)])
+```
+
+
+#Make StateYear in model
+```{r state-year-column-model}
+Individual_Model$StateYear <- paste(Individual_Model$State, Individual_Model$Year, sep="")
+```
+
+
+#Attach presidential voting data to model from Partisan Voter Index
+```{r pres-vote-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Pres_Vote = Pres_Vote$`%_Dem`[match(Individual_Model$StateYear, Pres_Vote$StateYear)])
+```
+
+
+#Attach solar radiation data to model (this is at State level I would like to get it by zip code if possible)
+```{r attach-solar-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Sol_Radiation = Solar_Data$Irradiance_m2[match(Individual_Model$State, Solar_Data$Full_Name)])
+```
+
+
+#Tag residential observations in model
+```{r res-installs-labels-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Residential = ifelse(grepl("residential|Residential|Residential/SF", Individual_Model$install_type), "Residential", "Not Residential"))
+```
+
+
+#Make YearGeoID in model
+```{r year-geoid-model}
+Individual_Model$YearGeoID <- paste(Individual_Model$Year, Individual_Model$GeoID, sep="")
+```
+
+
+#Attach granular electricity price data to model
+```{r pull-gran-elec-price-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Elec_Price = Granular_Elec$Price[match(Individual_Model$YearGeoID, Granular_Elec$YearGeoID, nomatch = NA)])
+```
+
+
+#Clean zeros from electricity price in model
+```{r clean-gran-elec-price-model}
+Individual_Model <- Individual_Model %>%
+  mutate(Clean_Elec_Price = ifelse(Individual_Model$Elec_Price == 0, NA, Individual_Model$Elec_Price))
+```
+
+
+#Make filtered df with residential installs only
+```{r res-filter}
+Res <- Individual_Model[which(Individual_Model$Residential == "Residential"),]
+```
+
+
+
+
+
+
+
+
+
+
+
+
+#PLOTS OF COUNT AND VARIABLE RELATIONSHIPS
+
+
+
+#Histogram plot installs by lcv
+```{r histogram-lcv-installs}
+ggplot(Res, aes(x = LCV)) +
+  geom_histogram(color = "white", fill = "black", binwidth = 5)
+```
